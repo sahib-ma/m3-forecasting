@@ -1,4 +1,3 @@
-# src/load_data.py
 # cd ~/m3/m3-forecasting
 # source m3env/bin/activate
 import pandas as pd
