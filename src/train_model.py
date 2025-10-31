@@ -11,7 +11,7 @@ def train_one_series(
     train_vals,
     h,
     input_len: int = 12,
-    hidden: int = 3,
+    hidden: int = 32,
     lr: float = 1e-3,
     wd: float = 1e-3,
     epochs: int = 180,
@@ -44,6 +44,8 @@ def train_one_series(
     loss_fn = nn.L1Loss()
 
     best_state, best_val, bad = None, float("inf"), 0
+    train_loss_history, val_loss_history = [], []
+
     for _ in range(epochs):
         model.train()
         opt.zero_grad()
@@ -51,20 +53,17 @@ def train_one_series(
         loss_tr = loss_fn(pred_tr, Y_tr)
         loss_tr.backward()
         opt.step()
+        train_loss_history.append(float(loss_tr.item()))
 
         model.eval()
         with torch.no_grad():
-            if len(X_va):
-                pred_va = model(X_va)
-                loss_va = loss_fn(pred_va, Y_va)
-            else:
-                loss_va = loss_tr
-            val = float(loss_va.item())
+            loss_va = loss_fn(model(X_va), Y_va) if len(X_va) else loss_tr
+            val_loss_history.append(float(loss_va.item()))
 
-        if val < best_val - 1e-8:
-            best_val = val
-            bad = 0
+        if float(loss_va) < best_val - 1e-8:
+            best_val = float(loss_va)
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            bad = 0
         else:
             bad += 1
             if bad >= patience:
@@ -74,7 +73,7 @@ def train_one_series(
         return None, None, None
 
     model.load_state_dict(best_state)
-    return model, comps, best_val
+    return model, comps, {"train": train_loss_history, "val": val_loss_history}
 
 
 def forecast_series(model, comps, train_vals, h):
@@ -109,7 +108,7 @@ def cv_select_hyperparams(train_vals, h, candidates=None, season=12):
     if candidates is None:
         candidates = {
             "input_len": [12, 18],
-            "hidden": [3],
+            "hidden": [32],
             "lr": [5e-4, 7e-4, 1e-3],
             "wd": [1e-3, 2e-3, 5e-3],
         }
@@ -169,4 +168,4 @@ def cv_select_hyperparams(train_vals, h, candidates=None, season=12):
                             best_score = m
                             best_cfg = {"input_len": inp, "hidden": hid, "lr": lr, "wd": wd}
 
-    return best_cfg or {"input_len": 12, "hidden": 3, "lr": 1e-3, "wd": 1e-3}
+    return best_cfg or {"input_len": 12, "hidden": 32, "lr": 1e-3, "wd": 1e-3}

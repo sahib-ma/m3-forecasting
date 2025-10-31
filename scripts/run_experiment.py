@@ -11,6 +11,7 @@ from train_model import cv_select_hyperparams, train_one_series, forecast_series
 from metrics import smape, mae, mape
 from baselines import seasonal_naive_forecast
 from make_windows import make_windows
+from graphs import plot_loss_curve
 
 
 if __name__ == "__main__":
@@ -29,11 +30,15 @@ if __name__ == "__main__":
     overfit_count = 0
     total_series = len(data)
 
+    all_train_losses = []
+    all_val_losses = []
+
     for i, item in enumerate(data, 1):
         y_tr, y_te = item["train"], item["test"]
+
         cfg = cv_select_hyperparams(y_tr, h)
 
-        model, comps, _ = train_one_series(
+        model, comps, loss_history = train_one_series(
             y_tr, h,
             input_len=cfg["input_len"],
             hidden=cfg["hidden"],
@@ -53,7 +58,8 @@ if __name__ == "__main__":
             last_inp = torch.tensor(Xw[-1], dtype=torch.float32).unsqueeze(0)
             resid_pred_train_std = model(last_inp).numpy()[0]
 
-        mu = float(comps["mu"]); sigma = float(comps["sigma"])
+        mu = float(comps["mu"])
+        sigma = float(comps["sigma"])
         resid_pred_train = resid_pred_train_std * sigma + mu
         trend_seg    = np.asarray(comps["trend"])[-h:]
         seasonal_seg = np.asarray(comps["seasonal"])[-h:]
@@ -86,10 +92,12 @@ if __name__ == "__main__":
             sn_s, sn_a, sn_p
         ))
 
+
     out_csv = Path("figures") / "results_finance_monthly.csv"
     with open(out_csv, "w", newline="") as f:
         csv.writer(f).writerows(rows)
     print(f"\nSaved per-series results to {out_csv}")
+
 
     arr = np.array(rows[1:], dtype=object)
     print("\n= Averages over all series =")
@@ -100,6 +108,13 @@ if __name__ == "__main__":
     print("S-NA  sMAPE:", round(np.mean(arr[:,11].astype(float)),2),
           "MAE:", round(np.mean(arr[:,12].astype(float)),2),
           "MAPE:", round(np.mean(arr[:,13].astype(float)),2))
+
+
+    max_len = max(len(l) for l in all_train_losses)
+    avg_train = np.mean([np.pad(l, (0, max_len-len(l)), 'edge') for l in all_train_losses], axis=0)
+    avg_val   = np.mean([np.pad(l, (0, max_len-len(l)), 'edge') for l in all_val_losses], axis=0)
+
+    plot_loss_curve(avg_train, avg_val, save_path=Path("figures")/"avg_loss_curve.png")
 
     print(f"\nSeries with potential overfitting (Test - Train sMAPE > 5): {overfit_count}/{total_series} "
           f"({overfit_count/total_series*100:.1f}%)")
