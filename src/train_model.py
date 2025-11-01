@@ -11,7 +11,7 @@ def train_one_series(
     train_vals,
     h,
     input_len: int = 12,
-    hidden: int = 32,
+    hidden: int = 3,
     lr: float = 1e-3,
     wd: float = 1e-3,
     epochs: int = 180,
@@ -108,7 +108,7 @@ def cv_select_hyperparams(train_vals, h, candidates=None, season=12):
     if candidates is None:
         candidates = {
             "input_len": [12, 18],
-            "hidden": [32],
+            "hidden": [3],
             "lr": [5e-4, 7e-4, 1e-3],
             "wd": [1e-3, 2e-3, 5e-3],
         }
@@ -168,4 +168,4 @@ def cv_select_hyperparams(train_vals, h, candidates=None, season=12):
                             best_score = m
                             best_cfg = {"input_len": inp, "hidden": hid, "lr": lr, "wd": wd}
 
-    return best_cfg or {"input_len": 12, "hidden": 32, "lr": 1e-3, "wd": 1e-3}
+    return best_cfg or {"input_len": 12, "hidden": 3, "lr": 1e-3, "wd": 1e-3}
