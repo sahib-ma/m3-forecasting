@@ -118,3 +118,231 @@ def plot_metric_curve(
         title=f"Train / Validation {metric_name}",
         **plot_kwargs,
     )
+
+
+
+###############################################################################################
+#STL decomposition
+from preprocess import decompose, project_components
+import pandas as pd
+
+def plot_stl_decomposition_example(
+    train: np.ndarray,
+    h: int = 18,
+    season: int = 12,
+    save_path: Optional[Union[str, Path]] = None,
+) -> plt.Figure:
+    """
+    Plot STL decomposition (trend, seasonal, residual) fitted on training data only,
+    and extend trend/seasonality into the forecast horizon.
+
+    """
+    _apply_paper_style()
+
+
+    trend, seasonal, resid = decompose(train, season=season)
+
+    trend_f, seas_f = project_components(trend, seasonal, h=h, season=season)
+
+   
+    t_train = np.arange(len(train))
+    t_future = np.arange(len(train), len(train) + h)
+
+
+    fig, axes = plt.subplots(4, 1, figsize=(6.5, 6), sharex=True)
+    fig.suptitle("STL Decomposition (Train-only fit)")
+
+    # 1. Original series
+    axes[0].plot(t_train, train, label="Original (Train)")
+    axes[0].axvspan(len(train) - h, len(train), color="0.9", alpha=0.3, label="Forecast horizon")
+    axes[0].set_ylabel("Original")
+    axes[0].legend(loc="upper left")
+    _format_axes(axes[0])
+
+    # 2. Trend
+    axes[1].plot(t_train, trend, label="Trend (train fit)")
+    axes[1].plot(t_future, trend_f, "--", label="Trend (extrapolated)")
+    axes[1].set_ylabel("Trend")
+    axes[1].legend(loc="upper left")
+    _format_axes(axes[1])
+
+    # 3. Seasonal
+    axes[2].plot(t_train, seasonal, label="Seasonal (train fit)")
+    axes[2].plot(t_future, seas_f, "--", label="Seasonal (repeated cycle)")
+    axes[2].set_ylabel("Seasonality")
+    axes[2].legend(loc="upper left")
+    _format_axes(axes[2])
+
+    # 4. Residual
+    axes[3].plot(t_train, resid, label="Residual (what MLP learns)")
+    axes[3].set_ylabel("Residual")
+    axes[3].set_xlabel("Months")
+    axes[3].legend(loc="upper left")
+    _format_axes(axes[3])
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.92)
+
+    if save_path:
+        p = Path(save_path)
+        plt.savefig(p, bbox_inches="tight", dpi=300)
+        print(f"Saved STL decomposition figure to {p}")
+
+    return fig
+
+from load_data import load_monthly_finance_data
+
+# Load one series from the M3 financial dataset
+data = load_monthly_finance_data()
+series = data[0]["train"]
+h = len(data[0]["test"])
+
+# Plot STL decomposition 
+plot_stl_decomposition_example(series, h=h, season=12, save_path="fig_stl_example.png")
+
+######################################################################################################
+
+from typing import Optional, Union
+from baselines import seasonal_naive_forecast
+
+
+def plot_forecast_example(
+    train: np.ndarray,
+    test: np.ndarray,
+    mlp_level_forecast: np.ndarray,   
+    season: int = 12,
+) -> Path:
+    """
+    Plot forecast comparison for one series:
+    Observed vs Seasonal Naïve vs MLP.
+    """
+    _apply_paper_style()
+
+    h = len(test)
+
+ 
+    snaive_level = seasonal_naive_forecast(train, h=h, season=season)
+
+    t_train = np.arange(len(train))
+    t_test = np.arange(len(train), len(train) + h)
+
+    fig, ax = plt.subplots(figsize=(6.5, 3.2))
+
+  
+    ax.axvspan(len(train) - 1, len(train) + h, color="0.9", alpha=0.4, label="Forecast Horizon")
+    ax.plot(t_train, train, color="0.6", label="Training Data")
+    ax.plot(t_test, test, color="black", linewidth=1.5, label="Observed (Test)")
+    ax.plot(t_test, snaive_level, "--", linewidth=1.2, label="Seasonal Naïve")
+    ax.plot(t_test, mlp_level_forecast, ":", linewidth=1.2, label="MLP Forecast")
+    ax.set_xlabel("Months")
+    ax.set_ylabel("Index value")  
+    ax.set_title("Forecast Example: Observed vs. Baselines")
+    ax.legend(loc="lower left")  
+    _format_axes(ax)
+
+    plt.tight_layout()
+
+    project_root = Path(__file__).resolve().parents[1]  
+    outdir = project_root / "figures"
+    outdir.mkdir(exist_ok=True)
+    base = outdir / "fig_forecast_example"
+
+    plt.savefig(f"{base}.png", bbox_inches="tight", dpi=300)
+    plt.close(fig)
+
+    print(f"Saved forecast comparison figure:\n  - {base}.png")
+    return base
+
+
+# Run ONE REAL SERIES end-to-end
+if __name__ == "__main__":
+    from load_data import load_monthly_finance_data
+    from train_model import cv_select_hyperparams, train_one_series, forecast_series
+
+    data = load_monthly_finance_data()  
+    assert len(data) > 0, "No series loaded."
+
+    # Pick which series to plot 
+    idx = 0
+    item = data[idx]
+    y_tr, y_te = item["train"], item["test"]
+    h = len(y_te)
+    season = 12
+
+    print(f"Running single-series experiment for index {idx} (train={len(y_tr)}, test={h})")
+
+    # rolling CV
+    cfg = cv_select_hyperparams(y_tr, h)
+    print(f"Selected hyperparameters: {cfg}")
+
+    # Train final model with early stopping
+    model, comps, hist = train_one_series(
+        y_tr, h,
+        input_len=cfg["input_len"],
+        hidden=cfg["hidden"],
+        lr=cfg["lr"],
+        wd=cfg["wd"],
+        epochs=180,
+        patience=8,
+    )
+    assert model is not None, "Training failed or returned None model."
+
+    yhat_test_level = forecast_series(model, comps, y_tr, h)
+    plot_forecast_example(y_tr, y_te, yhat_test_level, season=season)
+
+################################################################################################
+#Scatterplot and boxplot
+
+def plot_smape_comparison(
+    results_csv: str = "figures/results_finance_monthly.csv",
+    save_dir: str = "figures"
+):
+    """
+    Creates separate plots comparing per-series sMAPE between the MLP model
+    and the Seasonal Naïve benchmark:
+      1) Boxplot of sMAPE distributions
+      2) Scatter plot of per-series sMAPE
+    """
+
+    df = pd.read_csv(results_csv)
+    required_cols = ["test_smape", "snaive_smape"]
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"Missing column '{col}' in {results_csv}")
+
+    smape_model = df["test_smape"]
+    smape_snaive = df["snaive_smape"]
+
+    save_path_box = Path(save_dir) / "smape_boxplot.png"
+    save_path_scatter = Path(save_dir) / "smape_scatter.png"
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
+
+    # --- Boxplot ---
+    plt.figure(figsize=(5, 4))
+    plt.boxplot([smape_model, smape_snaive], labels=["MLP", "Seasonal Naïve"])
+    plt.title("Distribution of sMAPE Across All Series")
+    plt.ylabel("sMAPE (%)")
+    plt.tight_layout()
+    plt.savefig(save_path_box, bbox_inches="tight", dpi=300)
+    plt.close()
+    print(f"Saved boxplot: {save_path_box}")
+
+    # --- Scatter plot ---
+    plt.figure(figsize=(5, 4))
+    plt.scatter(smape_snaive, smape_model, alpha=0.6)
+    plt.plot([smape_snaive.min(), smape_snaive.max()],
+             [smape_snaive.min(), smape_snaive.max()],
+             "k--", linewidth=1, label="Equal performance (y = x)")
+    plt.xlabel("Seasonal Naïve sMAPE (%)")
+    plt.ylabel("MLP sMAPE (%)")
+    plt.title("sMAPE: MLP vs. Seasonal Naïve")
+    plt.legend(frameon=False, loc="upper left")
+    plt.tight_layout()
+    plt.savefig(save_path_scatter, bbox_inches="tight", dpi=300)
+    plt.close()
+    print(f"Saved scatter plot: {save_path_scatter}")
+
+
+if __name__ == "__main__":
+    plot_smape_comparison()
+
